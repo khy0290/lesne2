@@ -1,378 +1,305 @@
 import streamlit as st
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib.patches as patches
 import time
+import pandas as pd
 
-# --- Constants (can be adjusted for visual effect) ---
-# Gravitational constant (m^3 kg^-1 s^-2)
-G = 6.67430e-11
-# Speed of light (m/s)
-c = 2.998e8
-
-# Conversion factors for astronomical units to SI units
-M_SUN = 1.989e30  # Mass of the Sun in kg
-R_SUN = 6.957e8   # Radius of the Sun in meters
-M_JUPITER = 1.898e27 # Mass of Jupiter in kg
-R_JUPITER = 6.9911e7 # Radius of Jupiter in meters
-
-# --- Page Configuration and Styling ---
+# --- Page Configuration and Theming ---
 st.set_page_config(
     page_title="Gravitational Lensing Simulator",
+    page_icon="🌌",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="expanded",
 )
 
-# Custom CSS for universe theme and element styling
+# Custom CSS for a universe theme
+st.markdown("""
+<style>
+    /* Main app background */
+    .main {
+        background-color: #0E002A;
+        color: #FFFFFF;
+    }
+    /* Sidebar background */
+    .st-emotion-cache-16txtl3 {
+        background-color: #1C004F;
+    }
+    /* Text color */
+    h1, h2, h3, h4, h5, h6, p, .st-emotion-cache-10trblm {
+        color: #FFFFFF;
+    }
+    /* Slider labels */
+    .st-emotion-cache-ue6h4q {
+        color: #E0D6FF !important;
+    }
+    /* Button styling */
+    .stButton>button {
+        color: #FFFFFF;
+        background-color: #6C42D4;
+        border: 1px solid #8A63D4;
+        border-radius: 8px;
+        padding: 10px 24px;
+        font-weight: bold;
+    }
+    .stButton>button:hover {
+        background-color: #8A63D4;
+        border-color: #6C42D4;
+    }
+    /* Metric labels */
+    .st-emotion-cache-1g8m9in {
+        color: #C9B8FF;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+
+# --- Physics Constants & Simulation Parameters (scaled for visualization) ---
+# These are not real-world values but are scaled for a clear visual simulation.
+G = 6.674e-11  # Not used directly, mass is relative
+C = 299792458   # Not used directly, light path is illustrative
+SIM_WIDTH = 400 # Width of the simulation view
+SIM_HEIGHT = 200 # Height of the simulation view
+TIME_STEPS = 400 # Number of steps in the simulation
+
+
+# --- Session State Initialization ---
+# This ensures our variables persist between user interactions.
+if 'is_running' not in st.session_state:
+    st.session_state.is_running = False
+if 'time_step' not in st.session_state:
+    st.session_state.time_step = 0
+if 'light_curve_data' not in st.session_state:
+    st.session_state.light_curve_data = pd.DataFrame(columns=['Time', 'Magnification'])
+if 'lens_pos_x' not in st.session_state:
+    st.session_state.lens_pos_x = -SIM_WIDTH / 2
+
+
+# --- Helper Functions ---
+def calculate_magnification(u, source_radius):
+    """
+    Calculates the magnification of the source star's light.
+    A simplified model that considers the source's finite size.
+    u: Impact parameter (distance between lens and source line-of-sight).
+    source_radius: The radius of the source star.
+    """
+    if u < source_radius:
+        # When aligned, magnification is high but not infinite.
+        # This prevents division by zero and is more physically realistic.
+        return (u**2 + 2) / (u * np.sqrt(u**2 + 4)) * 1.5
+    magnification = (u**2 + 2) / (u * np.sqrt(u**2 + 4))
+    return magnification
+
+def reset_simulation():
+    """Resets the simulation to its initial state."""
+    st.session_state.is_running = False
+    st.session_state.time_step = 0
+    st.session_state.light_curve_data = pd.DataFrame(columns=['Time', 'Magnification'])
+    st.session_state.lens_pos_x = -SIM_WIDTH / 2
+
+
+# --- UI Sidebar ---
+with st.sidebar:
+    st.title("🌌 Lensing Controls")
+    st.markdown("Adjust the parameters of the celestial bodies and the simulation.")
+
+    # --- Star 2 (Lens) Controls ---
+    st.header("Lens Star (Star 2)")
+    lens_mass = st.slider("Mass (Relative)", 1.0, 10.0, 5.0, 0.1, help="Higher mass causes stronger light bending.")
+    lens_radius = st.slider("Radius (Visual)", 5, 20, 10, 1, help="Visual size in the simulation.")
+    lens_dist_factor = st.slider("Distance from Earth", 0.1, 0.9, 0.5, 0.05, help="Fraction of the distance between Earth and the Source Star.")
+
+    # --- Planet Controls ---
+    st.header("Planet (Optional)")
+    has_planet = st.checkbox("Star 2 has a planet", value=True)
+    if has_planet:
+        planet_mass = st.slider("Planet Mass (Relative)", 0.01, 0.5, 0.1, 0.01, help="A tiny fraction of the lens star's mass.")
+        planet_radius = st.slider("Planet Radius (Visual)", 1, 5, 2, 1)
+        planet_orbit_dist = st.slider("Planet Orbit Distance", 20, 60, 40, 1, help="Distance from its parent star (Star 2).")
+        planet_orbit_speed = st.slider("Planet Orbit Speed", 0.5, 5.0, 2.0, 0.1)
+    else:
+        # Set defaults if no planet
+        planet_mass = 0.0
+        planet_radius = 0
+        planet_orbit_dist = 0
+        planet_orbit_speed = 0
+
+    # --- Source Star (Star 1) Controls ---
+    st.header("Source Star (Star 1)")
+    source_radius = st.slider("Source Radius (Visual)", 5, 15, 8, 1)
+
+    # --- Simulation Controls ---
+    st.header("Simulation")
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("🚀 Start / Resume", use_container_width=True):
+            st.session_state.is_running = True
+    with col2:
+        if st.button("🔄 Reset", on_click=reset_simulation, use_container_width=True):
+            # The on_click handles the reset
+            pass
+
+    if st.session_state.is_running:
+        if st.button("⏸️ Pause", use_container_width=True):
+            st.session_state.is_running = False
+
+
+# --- Main App Layout ---
+st.title("Gravitational Lensing Simulation")
 st.markdown(
-    """
-    <style>
-    /* Main app background with a space image */
-    .stApp {
-        background: url("https://images.unsplash.com/photo-1508219808933-21b8f1c4a0e0?q=80&fm=jpg&crop=entropy&cs=tinysrgb&w=1920&h=1080&fit=crop&ixid=M3wxMjA3fDB8MXxzZWFyY2h8MTB8fHVuaXZlcnNlfGVufDB8fDB8fHww") no-repeat center center fixed;
-        background-size: cover;
-        color: white; /* Default text color */
-    }
-    /* Sidebar background with some transparency */
-    .css-1d391kg {
-        background-color: rgba(0, 0, 0, 0.7);
-    }
-    /* Main content area background with some transparency and rounded corners */
-    .css-1lcbmhc {
-        background-color: rgba(0, 0, 0, 0.5);
-        padding: 20px;
-        border-radius: 10px;
-    }
-    /* Ensure all text elements are white */
-    h1, h2, h3, h4, h5, h6, .stMarkdown, label, .stSlider > div > div > div {
-        color: white !important;
-    }
-    /* Style for the slider fill */
-    .stSlider > div > div > div > div {
-        background-color: #4CAF50; /* Green color for the slider track */
-    }
-    /* Style for the start simulation button */
-    .stButton > button {
-        background-color: #4CAF50; /* Green background */
-        color: white; /* White text */
-        border-radius: 10px; /* Rounded corners */
-        padding: 10px 20px; /* Padding inside the button */
-        font-size: 1.2em; /* Larger font size */
-        border: none; /* No border */
-        cursor: pointer; /* Pointer on hover */
-        transition: background-color 0.3s ease; /* Smooth transition on hover */
-    }
-    .stButton > button:hover {
-        background-color: #45a049; /* Darker green on hover */
-    }
-    /* Style for the checkbox label */
-    .stCheckbox > label {
-        color: white;
-    }
-    </style>
-    """,
-    unsafe_allow_html=True
+    "Observe how a massive star (the **Lens**) bends the light from a distant star (the **Source**), "
+    "magnifying its brightness as seen from Earth. If a planet is present, it can cause a secondary, smaller spike in brightness."
 )
 
-st.title("🌌 Gravitational Lensing Simulator")
-st.markdown("Explore how massive objects bend light and magnify distant stars.")
+# Create two columns for the simulation and the graph
+col_sim, col_graph = st.columns([0.6, 0.4], gap="large")
 
-st.sidebar.header("Simulation Parameters")
+# Create placeholders to update the plots dynamically
+with col_sim:
+    sim_placeholder = st.empty()
+with col_graph:
+    graph_placeholder = st.empty()
+    metric_placeholder = st.empty()
 
-# --- Sliders and Checkbox for user input ---
 
-# Slider for the mass of the lensing star (Star 2)
-mass_star2_solar = st.sidebar.slider(
-    "Mass of Lensing Star (Star 2) (Solar Masses)",
-    min_value=0.1, max_value=10.0, value=1.0, step=0.1,
-    help="Adjust the mass of the star causing the lensing effect."
-)
-# Slider for the radius of the lensing star (Star 2)
-radius_star2_solar = st.sidebar.slider(
-    "Radius of Lensing Star (Star 2) (Solar Radii)",
-    min_value=0.1, max_value=5.0, value=1.0, step=0.1,
-    help="Adjust the visual size of the lensing star. (Does not affect lensing physics in this simplified model)."
-)
+# --- Main Simulation Loop ---
+while st.session_state.is_running:
+    # --- Calculate Positions ---
+    # Lens Star (Star 2) moves from left to right
+    st.session_state.lens_pos_x += SIM_WIDTH / TIME_STEPS
+    lens_pos_y = SIM_HEIGHT / 2
 
-# Slider for the distance of Star 2 from Earth (as a fraction of Earth-Star1 distance)
-distance_lens_fraction = st.sidebar.slider(
-    "Distance of Star 2 from Earth (Fraction of Earth-Star1 distance)",
-    min_value=0.1, max_value=0.9, value=0.5, step=0.05,
-    help="Position Star 2 between Earth and Star 1. 0.5 means halfway."
-)
+    # Planet orbits the Lens Star
+    angle = (st.session_state.time_step * planet_orbit_speed * 0.1) % (2 * np.pi)
+    planet_pos_x = st.session_state.lens_pos_x + planet_orbit_dist * np.cos(angle)
+    planet_pos_y = lens_pos_y + planet_orbit_dist * np.sin(angle)
 
-# Checkbox to decide if Star 2 has an orbiting planet
-has_planet = st.sidebar.checkbox("Star 2 has an orbiting Planet?", value=False)
+    # Source Star (Star 1) is stationary in the background
+    source_pos_x = 0
+    source_pos_y = SIM_HEIGHT / 2
 
-mass_planet_jupiter = 0.0
-radius_planet_jupiter = 0.0
-if has_planet:
-    # Sliders for planet mass and radius, visible only if has_planet is checked
-    mass_planet_jupiter = st.sidebar.slider(
-        "Mass of Planet (Jupiter Masses)",
-        min_value=0.1, max_value=5.0, value=1.0, step=0.1,
-        help="Adjust the mass of the orbiting planet."
-    )
-    radius_planet_jupiter = st.sidebar.slider(
-        "Radius of Planet (Jupiter Radii)",
-        min_value=0.1, max_value=2.0, value=1.0, step=0.1,
-        help="Adjust the visual size of the orbiting planet."
-    )
-    st.sidebar.info("Note: Planet's orbit is fixed for simplicity. Its lensing effect is a simplified perturbation.")
+    # --- Calculate Magnification ---
+    # Impact parameter is the distance in the y-z plane (here, just y)
+    # The "Einstein Radius" is proportional to the square root of the mass.
+    # We simplify this by making the impact parameter relative to the mass.
+    einstein_radius_star = 15 * np.sqrt(lens_mass)
+    impact_parameter_star = abs(st.session_state.lens_pos_x - source_pos_x)
+    u_star = impact_parameter_star / einstein_radius_star
+    magnification_star = calculate_magnification(u_star, source_radius)
 
-st.sidebar.write("---")
-start_simulation = st.sidebar.button("🚀 Start Simulation")
+    magnification_planet = 0
+    if has_planet:
+        einstein_radius_planet = 15 * np.sqrt(planet_mass)
+        impact_parameter_planet = abs(planet_pos_x - source_pos_x)
+        u_planet = impact_parameter_planet / einstein_radius_planet
+        # Planet's effect is additive in this simplified model
+        magnification_planet = calculate_magnification(u_planet, source_radius) - 1.0
 
-# --- Simulation Setup ---
 
-# Define fixed conceptual distances for the simulation visualization
-# These are not real-world units but represent relative distances for plotting
-D_S = 1000  # Conceptual distance from Earth to Star 1 (Source)
-D_L = D_S * distance_lens_fraction  # Conceptual distance from Earth to Star 2 (Lens)
-D_LS = D_S - D_L # Conceptual distance from Star 2 to Star 1
-
-# Convert slider values to SI units for physical calculations
-M_lens_SI = mass_star2_solar * M_SUN
-R_lens_SI = radius_star2_solar * R_SUN
-M_planet_SI = mass_planet_jupiter * M_JUPITER
-R_planet_SI = radius_planet_jupiter * R_JUPITER
-
-# --- Gravitational Lensing Physics Functions ---
-
-def einstein_radius(M, D_L_conceptual, D_S_conceptual, D_LS_conceptual):
-    """
-    Calculates the Einstein radius in radians.
-    Uses conceptual distances for the ratio, but SI mass.
-    """
-    # To use the formula correctly, D_L, D_S, D_LS must be in consistent units.
-    # We'll assume the conceptual units are consistent, and the ratio is what matters.
-    # For actual physical calculation, these distances should be in meters.
-    # For a visual simulation, we can use the ratio of conceptual distances.
-    # Let's assume conceptual units are 'light-years' for example, and the formula
-    # still holds with M in kg, G, c in SI.
+    total_magnification = magnification_star + magnification_planet
     
-    # Avoid division by zero if distances are zero (though sliders prevent this)
-    if D_L_conceptual == 0 or D_S_conceptual == 0 or D_LS_conceptual == 0:
-        return 0.0
+    # Append new data for the light curve
+    new_data = pd.DataFrame([[st.session_state.time_step, total_magnification]], columns=['Time', 'Magnification'])
+    st.session_state.light_curve_data = pd.concat([st.session_state.light_curve_data, new_data], ignore_index=True)
+
+
+    # --- Draw Simulation Plot ---
+    fig_sim, ax_sim = plt.subplots(figsize=(8, 4))
+    ax_sim.set_facecolor('#00001a') # Dark blue space background
+    ax_sim.set_xlim(-SIM_WIDTH / 2, SIM_WIDTH / 2)
+    ax_sim.set_ylim(0, SIM_HEIGHT)
+    ax_sim.set_aspect('equal', adjustable='box')
+    ax_sim.set_xticks([])
+    ax_sim.set_yticks([])
+
+    # Draw Earth (Observer)
+    earth = patches.Circle((0, 20), radius=5, color='#4da6ff', label='Earth')
+    ax_sim.add_patch(earth)
+    ax_sim.text(0, 5, 'Earth (Observer)', color='white', ha='center', fontsize=10)
+
+    # Draw Source Star (Star 1)
+    source_star = patches.Circle((source_pos_x, source_pos_y), radius=source_radius, color='#ffff99', label='Source Star')
+    ax_sim.add_patch(source_star)
+    ax_sim.text(source_pos_x, source_pos_y + source_radius + 5, 'Source Star 1', color='white', ha='center', fontsize=10)
+
+    # Draw Lens Star (Star 2)
+    lens_star = patches.Circle((st.session_state.lens_pos_x, lens_pos_y), radius=lens_radius, color='#ff6666', label='Lens Star')
+    ax_sim.add_patch(lens_star)
+
+    # Draw Planet
+    if has_planet:
+        planet = patches.Circle((planet_pos_x, planet_pos_y), radius=planet_radius, color='#99ccff')
+        ax_sim.add_patch(planet)
+
+    # --- Draw Light Path (Illustrative) ---
+    # The light path is bent. We show this as two paths.
+    lens_plane_y = lens_pos_y * lens_dist_factor + 20 * (1 - lens_dist_factor)
     
-    # The formula requires consistent units for distances. Since our D_S, D_L, D_LS
-    # are conceptual for plotting, we need to ensure the ratio is correct.
-    # For a realistic calculation, these would be in meters.
-    # Let's assume D_S_conceptual is in some unit, and the ratio (D_LS / (D_L * D_S))
-    # is dimensionless, so the result is correct in radians.
+    # Calculate deflection based on mass
+    deflection_strength = lens_mass * 0.5
     
-    # A more robust way would be to define a conceptual unit to meter conversion.
-    # For simplicity of demonstration, we proceed with the conceptual units directly
-    # in the ratio part of the formula.
+    # Path 1 (Top)
+    path1_mid_x = st.session_state.lens_pos_x
+    path1_mid_y = lens_pos_y + lens_radius + deflection_strength
+    ax_sim.plot([source_pos_x, path1_mid_x], [source_pos_y, path1_mid_y], color='yellow', linestyle='--', alpha=0.7)
+    ax_sim.plot([path1_mid_x, 0], [path1_mid_y, 20], color='yellow', linestyle='--', alpha=0.7,
+                label='Bent Light Path')
+
+    # Path 2 (Bottom)
+    path2_mid_x = st.session_state.lens_pos_x
+    path2_mid_y = lens_pos_y - lens_radius - deflection_strength
+    ax_sim.plot([source_pos_x, path2_mid_x], [source_pos_y, path2_mid_y], color='yellow', linestyle='--', alpha=0.7)
+    ax_sim.plot([path2_mid_x, 0], [path2_mid_y, 20], color='yellow', linestyle='--', alpha=0.7)
     
-    # This factor scales the Einstein radius for visualization purposes.
-    # The actual Einstein radius is tiny. We need to make it visible.
-    scaling_factor_for_vis = 1e10 # Arbitrary scaling to make the effect visible in plot
+    # Add an arrow to one path
+    ax_sim.annotate('', xy=(0, 20), xytext=(path1_mid_x, path1_mid_y),
+                arrowprops=dict(arrowstyle="->", color='yellow', lw=1.5))
+
+    sim_placeholder.pyplot(fig_sim)
+    plt.close(fig_sim) # Close figure to free memory
+
+
+    # --- Draw Light Curve Graph ---
+    fig_graph, ax_graph = plt.subplots(figsize=(6, 4))
+    ax_graph.set_facecolor('#1a0033')
+    ax_graph.set_title("Apparent Brightness of Source Star", color='white')
+    ax_graph.set_xlabel("Time (steps)", color='white')
+    ax_graph.set_ylabel("Magnification (Brightness)", color='white')
+    ax_graph.tick_params(colors='white')
+    ax_graph.spines['bottom'].set_color('white')
+    ax_graph.spines['top'].set_color('white')
+    ax_graph.spines['left'].set_color('white')
+    ax_graph.spines['right'].set_color('white')
     
-    return np.sqrt((4 * G * M / c**2) * (D_LS_conceptual / (D_L_conceptual * D_S_conceptual))) * scaling_factor_for_vis
+    if not st.session_state.light_curve_data.empty:
+        ax_graph.plot(st.session_state.light_curve_data['Time'], st.session_state.light_curve_data['Magnification'], color='#8A63D4', marker='o', markersize=2, linestyle='-')
+        ax_graph.set_xlim(0, TIME_STEPS)
+        # Dynamically adjust y-axis limit
+        max_mag = st.session_state.light_curve_data['Magnification'].max()
+        ax_graph.set_ylim(0.9, max(2.0, max_mag * 1.1)) # Minimum ylim of 2.0
+    
+    graph_placeholder.pyplot(fig_graph)
+    plt.close(fig_graph)
 
-def magnification(u):
-    """
-    Calculates the magnification for a point source/lens.
-    u is the dimensionless impact parameter (beta / Einstein_radius).
-    """
-    if u == 0: # Handle exact alignment, theoretically infinite magnification
-        return 100.0 # Cap for visualization purposes
-    return (u**2 + 2) / (u * np.sqrt(u**2 + 4))
+    # --- Update Metrics ---
+    with metric_placeholder.container():
+        m_col1, m_col2 = st.columns(2)
+        m_col1.metric("Current Time Step", f"{st.session_state.time_step}/{TIME_STEPS}")
+        m_col2.metric("Current Magnification", f"{total_magnification:.2f}x")
 
-# --- Simulation Visualization Area ---
-# Use columns to arrange the simulation and graph side-by-side
-col1, col2 = st.columns([2, 1]) # Column 1 is wider for the simulation
+    # --- Loop Control ---
+    st.session_state.time_step += 1
+    if st.session_state.lens_pos_x > SIM_WIDTH / 2:
+        st.session_state.is_running = False
+        st.toast("Simulation Complete!", icon="🎉")
 
-with col1:
-    st.header("Visual Simulation")
-    # Placeholder for the animation plot, allows real-time updates
-    simulation_placeholder = st.empty()
+    # Control animation speed
+    time.sleep(0.05)
 
-with col2:
-    st.header("Brightness Curve (Magnification)")
-    # Placeholder for the brightness graph, allows real-time updates
-    brightness_placeholder = st.empty()
+# Final state when not running
+if not st.session_state.is_running:
+    if st.session_state.time_step > 0:
+        st.info("Simulation paused or finished. Press 'Start / Resume' to continue or 'Reset' to start over.")
+    else:
+        st.info("Adjust the parameters in the sidebar and press 'Start' to begin the simulation.")
 
-# --- Run Simulation on Button Click ---
-if start_simulation:
-    st.toast("Simulation started! ✨", icon="🚀")
-
-    # Simulation parameters for the animation loop
-    total_steps = 200 # Number of frames in the animation
-    time_duration = 10 # Conceptual time units for the animation - MADE FASTER
-    dt = time_duration / total_steps # Time step per frame
-
-    # How far the lens moves perpendicular to the line of sight
-    # This determines the "impact parameter" for the lensing event
-    cross_distance_max = 0.05 * D_S
-
-    # Data lists to store values for the brightness curve
-    times = []
-    magnifications_data = []
-
-    # Setup Matplotlib figures and axes for simulation and brightness plots
-    fig_sim, ax_sim = plt.subplots(figsize=(10, 5))
-    fig_bright, ax_bright = plt.subplots(figsize=(8, 4))
-
-    # Configure simulation plot (ax_sim) for a space theme
-    ax_sim.set_facecolor('black') # Black background for space
-    fig_sim.patch.set_facecolor('black') # Match figure background
-    ax_sim.set_xlim(-0.1 * D_S, D_S * 1.1) # X-axis limits
-    ax_sim.set_ylim(-cross_distance_max * 1.5, cross_distance_max * 1.5) # Y-axis limits
-    ax_sim.set_aspect('equal', adjustable='box') # Maintain aspect ratio
-    ax_sim.axis('off') # Hide axes for a cleaner look
-
-    # Configure brightness plot (ax_bright)
-    ax_bright.set_facecolor('black') # Black background
-    fig_bright.patch.set_facecolor('black') # Match figure background
-    ax_bright.set_xlabel("Time (conceptual units)", color='white') # X-axis label
-    ax_bright.set_ylabel("Magnification", color='white') # Y-axis label
-    ax_bright.tick_params(axis='x', colors='white') # White tick labels for x-axis
-    ax_bright.tick_params(axis='y', colors='white') # White tick labels for y-axis
-    # White spines (borders) for the plot
-    ax_bright.spines['bottom'].set_color('white')
-    ax_bright.spines['left'].set_color('white')
-    ax_bright.spines['top'].set_color('white')
-    ax_bright.spines['right'].set_color('white')
-    ax_bright.set_title("Apparent Brightness of Star 1", color='white') # Plot title
-    ax_bright.grid(True, linestyle='--', alpha=0.5, color='gray') # Grid for readability
-
-    # --- Animation Loop ---
-    for i in range(total_steps):
-        current_time = i * dt
-        # Calculate the linear movement of Star 2 across the line of sight
-        y_lens = -cross_distance_max + (2 * cross_distance_max / total_steps) * i
-        x_lens = D_L # Star 2's X position remains constant (at lens distance)
-
-        # Calculate planet's position if it exists (simplified circular orbit)
-        x_planet, y_planet = x_lens, y_lens # Default to same as star if no planet or no orbit
-        if has_planet:
-            planet_orbit_radius = 0.005 * D_S # Conceptual orbit radius for visualization
-            # Angle of the planet in its orbit (5 full orbits during the simulation)
-            planet_angle = (current_time / time_duration) * 2 * np.pi * 5
-            x_planet = x_lens + planet_orbit_radius * np.cos(planet_angle)
-            y_planet = y_lens + planet_orbit_radius * np.sin(planet_angle)
-
-        # Calculate angular separation (beta) for the main lensing star (Star 2)
-        # Beta is the angular separation between the source and the lens as seen from the observer
-        # without lensing. It's approximated by the perpendicular distance divided by the lens distance.
-        beta_star2 = np.abs(y_lens) / D_L # Angular separation in radians
-
-        # Calculate Einstein Radius for Star 2 using its mass in SI units
-        theta_E_star2 = einstein_radius(M_lens_SI, D_L, D_S, D_LS)
-
-        # Calculate dimensionless impact parameter (u) for Star 2
-        u_star2 = beta_star2 / theta_E_star2 if theta_E_star2 > 0 else float('inf')
-
-        # Calculate magnification for Star 2
-        mag_star2 = magnification(u_star2)
-
-        # If a planet exists, calculate its additional lensing effect
-        mag_planet_effect = 1.0 # Default to no additional effect
-        if has_planet:
-            # Simplified calculation for planet's effect:
-            # Treat planet as a separate lens. This is a simplification for visualization
-            # and does not fully represent the complex binary lens equation.
-            beta_planet = np.abs(y_planet) / D_L # Angular separation of planet from line of sight
-            theta_E_planet = einstein_radius(M_planet_SI, D_L, D_S, D_LS)
-            u_planet = beta_planet / theta_E_planet if theta_E_planet > 0 else float('inf')
-            
-            # If the planet is very close to the line of sight (u_planet < 2),
-            # its individual magnification contributes.
-            if u_planet < 2:
-                mag_planet_effect = magnification(u_planet)
-            else:
-                mag_planet_effect = 1.0 # No significant effect if far away
-
-        # Combine magnifications (simplified: multiply effects)
-        total_magnification = mag_star2 * mag_planet_effect
-        
-        # Add current time and magnification to data lists
-        times.append(current_time)
-        magnifications_data.append(total_magnification)
-
-        # --- Update Visual Simulation Plot ---
-        ax_sim.clear() # Clear the previous frame
-        ax_sim.set_facecolor('black') # Reset background color
-        ax_sim.set_xlim(-0.1 * D_S, D_S * 1.1)
-        ax_sim.set_ylim(-cross_distance_max * 1.5, cross_distance_max * 1.5)
-        ax_sim.set_aspect('equal', adjustable='box')
-        ax_sim.axis('off')
-
-        # Plot Earth (Observer)
-        ax_sim.plot(0, 0, 'o', color='blue', markersize=10, label="Earth (Observer)")
-        ax_sim.text(0, -0.08 * D_S, "Earth", color='white', ha='center', fontsize=10)
-
-        # Plot Star 1 (Light Source)
-        ax_sim.plot(D_S, 0, '*', color='yellow', markersize=15, label="Star 1 (Source)")
-        ax_sim.text(D_S, -0.08 * D_S, "Star 1", color='white', ha='center', fontsize=10)
-
-        # Plot Star 2 (Lensing Body)
-        # Use a circle to represent the star's size, scaled for visibility
-        # The scaling factor (5e-10) is arbitrary to make the circle visible on the plot.
-        star2_circle = plt.Circle((x_lens, y_lens), radius=R_lens_SI * 5e-10, color='red', alpha=0.8)
-        ax_sim.add_patch(star2_circle)
-        ax_sim.text(x_lens, y_lens + R_lens_SI * 5e-10 + 0.005 * D_S, "Star 2", color='white', ha='center', fontsize=10)
-
-        # Plot Planet (if exists)
-        if has_planet:
-            # Use a circle for the planet, scaled for visibility
-            planet_circle = plt.Circle((x_planet, y_planet), radius=R_planet_SI * 5e-10, color='cyan', alpha=0.8)
-            ax_sim.add_patch(planet_circle)
-            ax_sim.text(x_planet, y_planet + R_planet_SI * 5e-10 + 0.005 * D_S, "Planet", color='white', ha='center', fontsize=10)
-
-        # --- Light Path Visualization ---
-        # Show a bent light path if the lens is close enough to the line of sight
-        if u_star2 < 5: # Arbitrary threshold for "significant lensing"
-            # Draw two segments: Star 1 to Star 2, and Star 2 to Earth
-            ax_sim.plot([D_S, x_lens], [0, y_lens], 'w--', alpha=0.5) # Dashed line
-            ax_sim.plot([x_lens, 0], [y_lens, 0], 'w--', alpha=0.5) # Dashed line
-            # Add arrows to indicate light direction
-            ax_sim.arrow(D_S, 0, x_lens - D_S, y_lens, head_width=0.005*D_S, head_length=0.01*D_S, fc='white', ec='white', length_includes_head=True)
-            ax_sim.arrow(x_lens, y_lens, 0 - x_lens, 0 - y_lens, head_width=0.005*D_S, head_length=0.01*D_S, fc='white', ec='white', length_includes_head=True)
-        else:
-            # Draw a straight line if no significant lensing effect
-            ax_sim.plot([D_S, 0], [0, 0], 'w-', alpha=0.5) # Solid line
-            ax_sim.arrow(D_S, 0, -D_S, 0, head_width=0.005*D_S, head_length=0.01*D_S, fc='white', ec='white', length_includes_head=True)
-
-        # Update the simulation plot in the placeholder
-        simulation_placeholder.pyplot(fig_sim)
-
-        # --- Update Brightness Curve Plot ---
-        ax_bright.clear() # Clear the previous brightness plot
-        ax_bright.set_facecolor('black') # Reset background color
-        ax_bright.plot(times, magnifications_data, color='lime', linewidth=2) # Plot the curve
-        ax_bright.set_xlabel("Time (conceptual units)", color='white')
-        ax_bright.set_ylabel("Magnification", color='white')
-        ax_bright.tick_params(axis='x', colors='white')
-        ax_bright.tick_params(axis='y', colors='white')
-        ax_bright.spines['bottom'].set_color('white')
-        ax_bright.spines['left'].set_color('white')
-        ax_bright.spines['top'].set_color('white')
-        ax_bright.spines['right'].set_color('white')
-        ax_bright.set_title("Apparent Brightness of Star 1", color='white')
-        ax_bright.grid(True, linestyle='--', alpha=0.5, color='gray')
-        # Dynamically adjust y-axis limits for the brightness plot
-        ax_bright.set_ylim(0.8, max(magnifications_data) * 1.2 if magnifications_data else 2.0)
-
-        # Update the brightness plot in the placeholder
-        brightness_placeholder.pyplot(fig_bright)
-
-        time.sleep(0.02) # Control animation speed (0.02 seconds per frame) - MADE FASTER
-
-    # Close Matplotlib figures to free up memory after the simulation is complete
-    plt.close(fig_sim)
-    plt.close(fig_bright)
-
-    st.toast("Simulation finished! 🎉", icon="✅")
-
-# --- Footer / Instructions ---
-st.markdown(
-    """
-    <div style="text-align: center; margin-top: 30px; color: gray;">
-        <p>This simulator provides a simplified visualization of gravitational lensing.</p>
-        <p>Adjust the parameters in the sidebar to observe how the mass and position of a foreground star (Star 2) and its planet affect the apparent brightness of a background star (Star 1).</p>
-    </div>
-    """,
-    unsafe_allow_html=True
-)
