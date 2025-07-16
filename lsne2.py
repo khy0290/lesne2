@@ -131,9 +131,11 @@ D_LS = D_S - D_L # Conceptual distance from Star 2 to Star 1
 
 # Convert slider values to SI units for physical calculations
 M_lens_SI = mass_star2_solar * M_SUN
-R_lens_SI = radius_star2_solar * M_SUN # Using M_SUN for scaling radius for visual effect
+# Corrected: Use R_SUN for radius conversion
+R_lens_SI = radius_star2_solar * R_SUN
 M_planet_SI = mass_planet_jupiter * M_JUPITER
-R_planet_SI = radius_planet_jupiter * M_JUPITER # Using M_JUPITER for scaling radius for visual effect
+# Corrected: Use R_JUPITER for planet radius conversion
+R_planet_SI = radius_planet_jupiter * R_JUPITER
 
 # --- Gravitational Lensing Physics Functions ---
 
@@ -194,11 +196,11 @@ with col2:
 
 # --- Run Simulation on Button Click ---
 if start_simulation:
-    st.toast("Simulation started! ✨", icon="🚀")
+    st.toast("Simulation started! ✨", icon="�")
 
     # Simulation parameters for the animation loop
     total_steps = 200 # Number of frames in the animation
-    time_duration = 10 # Reverted to a slightly longer duration for stability
+    time_duration = 20 # Reverted to a longer duration for stability
     dt = time_duration / total_steps # Time step per frame
 
     # How far the lens moves perpendicular to the line of sight
@@ -356,7 +358,7 @@ if start_simulation:
         # Update the brightness plot in the placeholder
         brightness_placeholder.pyplot(fig_bright)
 
-        time.sleep(0.05) # Reverted to a slightly slower animation speed for stability
+        time.sleep(0.08) # Slightly increased delay for stability
 
     # Close Matplotlib figures to free up memory after the simulation is complete
     plt.close(fig_sim)
