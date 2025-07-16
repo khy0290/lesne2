@@ -171,11 +171,11 @@ with col2:
 
 # --- Run Simulation on Button Click ---
 if start_simulation:
-    st.toast("Simulation started! ✨", icon="🚀")
+    st.toast("Simulation started! ✨", icon="�")
 
     # Simulation parameters for the animation loop
     total_steps = 200 
-    time_duration = 10 # Reverted to the speed from the 2nd version
+    time_duration = 20 # Increased duration for more stability
     dt = time_duration / total_steps 
 
     cross_distance_max = 0.05 * D_S
@@ -294,7 +294,7 @@ if start_simulation:
 
         brightness_placeholder.pyplot(fig_bright)
 
-        time.sleep(0.02) # Reverted to the animation speed from the 2nd version
+        time.sleep(0.08) # Increased delay for more stability
 
     plt.close(fig_sim)
     plt.close(fig_bright)
